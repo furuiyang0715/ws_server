@@ -5,6 +5,8 @@ import struct
 import threading
 import time
 
+from subtopub.utils.consumer import create_consumer
+
 logger = logging.getLogger("main_log")
 
 
@@ -34,11 +36,7 @@ class WebSocket(threading.Thread):
         self.handshaken = False
 
     def _generate_token(self, ws_key):
-        """
-        拿到客户端的 ws_key 生成 ws_token
-        :param ws_key:
-        :return:
-        """
+        """拿到客户端的 ws_key 生成 ws_token"""
         ws_key += self.GUID
         ser_websocketkey = hashlib.sha1(ws_key.encode(encoding='utf-8')).digest()
         websocket_token = base64.b64encode(ser_websocketkey)
@@ -83,16 +81,24 @@ class WebSocket(threading.Thread):
         """
         打包将要发送给客户端的数据
         server 使用 socket 将转换后的消息发送给 cli
-        :param msg: str 类型的
+        :param msg: bytes 或 str 类型的
         :return:
         """
+        if isinstance(msg, bytes):
+            bytes_msg = msg
+        elif isinstance(msg, str):
+            bytes_msg = msg.encode("utf-8")
+        else:
+            raise ValueError
+
         send_msg = b""
         send_msg += b"\x81"
         back_str = []
         back_str.append('\x81')
 
-        data_length = len(msg.encode())
-        logger.info(f"INFO: send message is {msg} and len is {len(msg.encode('utf-8'))}")
+        data_length = len(bytes_msg)
+        # logger.info(f"INFO: send message is {str(msg)} and len is {len(bytes_msg)}")
+
         if data_length <= 125:
             send_msg += str.encode(chr(data_length))
         elif data_length <= 65535:
@@ -103,7 +109,8 @@ class WebSocket(threading.Thread):
             send_msg += struct.pack('>q', data_length)
         else:
             raise RuntimeError("发送数据过长")
-        send_message = send_msg + msg.encode('utf-8')
+
+        send_message = send_msg + bytes_msg
         return send_message
 
     def _broadcast_message(self, send_message):
@@ -124,11 +131,7 @@ class WebSocket(threading.Thread):
         self.server.g_code_length = 0
 
     def push(self, msg):
-        """
-        向单个 cli 推送消息
-        :param msg:
-        :return:
-        """
+        """向单个 cli 推送消息"""
         str_msg = self._convert_str_message(msg)
         if str_msg is not None and len(str_msg) > 0:
 
@@ -141,20 +144,12 @@ class WebSocket(threading.Thread):
         self.server.g_code_length = 0
 
     def broadcast(self, msg):
-        """
-        server 向每一个 cli 广播信息
-        :param msg: bytes 类型
-        :return:
-        """
+        """server 向每一个 cli 广播信息"""
         str_msg = self._convert_str_message(msg)
         self._broadcast_message(str_msg)
 
     def _cal_msg_length(self, msg):
-        """
-        计算 server 待接收数据的长度信息
-        :param msg:
-        :return:
-        """
+        """计算 server 待接收数据的长度信息"""
         code_length = msg[1] & 127
         if code_length == 126:
             code_length = struct.unpack('>H', msg[2:4])[0]
@@ -169,11 +164,7 @@ class WebSocket(threading.Thread):
         return header_length, code_length
 
     def _parse_cli_data(self, msg):
-        """
-        解析从客户端收到的数据
-        :param msg:
-        :return:
-        """
+        """解析从客户端收到的数据"""
         code_length = msg[1] & 127
 
         if code_length == 126:
@@ -225,6 +216,8 @@ class WebSocket(threading.Thread):
         self.length_buffer = 0
         self.buffer_utf8 = b""
 
+    # TODO 增减推送过程中客户端异常挂掉的处理
+    # TODO 对 run 进行运行时异常处理
     def run(self):
         logger.info(f'Handle Socket {self.index} Start!')
 
@@ -245,9 +238,9 @@ class WebSocket(threading.Thread):
             else:
                 try:
                     part_msg = self.conn.recv(128)
-                except OSError:   # client Take the initiative to close
-                    logger.debug(f'检测到客户端主动断开连接')
-                    self.server.delete_connection(str(self.index))
+                except OSError:
+                    # logger.debug(f'检测到客户端主动断开连接')
+                    # self.server.delete_connection(str(self.index))
                     break
 
                 # 计算待接收数据的总长度，判断是否接收完，如未接受完需要继续接收 并将计算出的长度预设给 server 的全局变量
@@ -278,7 +271,6 @@ class WebSocket(threading.Thread):
                         # ERROR-2： 输入为空
                         self.push(f"ERROR-2")
                         continue
-
                     try:
                         recv_message = self._parse_cli_data((self.buffer_utf8))
                     except Exception as e:
@@ -294,20 +286,33 @@ class WebSocket(threading.Thread):
                         self.server.delete_connection(self.index)
                         break
                     else:
-
-                        msg = f'我是服务器 我收到了 你的消息: {recv_message}'
-                        import json
-                        py_type_msg = json.loads(recv_message)
-                        logger.info(type(py_type_msg))
-
-                        if py_type_msg.get("type") == "get":
-                            self.push("这是你请求的数据 ")
-                        elif py_type_msg.get("type") == "sub":
-                            self.push("这是你订阅的数据 ")
-                        elif py_type_msg.get("type") == "quit":
-                            self.push("退出")
-                            #
-                        else:
-                            self.push("参数不在范围内 ")
-
+                        self._process_request(recv_message)
                     self._reset_recv_info()
+
+    def _process_request(self, recv_message):
+        msg = f'收到了你的消息: {recv_message}'
+        self.push(msg)
+
+        import json
+        py_type_msg = json.loads(recv_message)
+        logger.info(type(py_type_msg))
+        if py_type_msg.get("type") == "get":
+            self.push("这是你请求的数据 ")
+        elif py_type_msg.get("type") == "sub":
+            self.push("这是你订阅的数据 ")
+
+            TOPIC = "total"
+            HOSTS = "192.168.1.152:9092,192.168.1.163:9092"
+            GROUP = "total2"
+            CNID = "2"
+            lds = create_consumer(HOSTS, TOPIC, GROUP, CNID)
+            for msg in lds:
+                # 数据类型 bytes
+                # logger.info(str(msg.value), type(msg.value))
+                self.push(msg.value)
+
+        elif py_type_msg.get("type") == "quit":
+            logger.debug(f'检测到客户端希望断开连接请求')
+            self.server.delete_connection(str(self.index))
+        else:
+            self.push("参数不在范围内 ")
