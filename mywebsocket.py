@@ -1,10 +1,12 @@
 import base64
 import hashlib
+import json
 import logging
 import struct
 import threading
 import time
 
+from datas_src.consumer import subscribe
 from subtopub.utils.consumer import create_consumer
 
 logger = logging.getLogger("main_log")
@@ -249,7 +251,6 @@ class WebSocket(threading.Thread):
                         self.server.g_header_length, self.server.g_code_length = self._cal_msg_length(part_msg)
                     except Exception as e:
                         logger.info(f"无法解析客户端信息:{e}")
-                        # ERROR-1： 数据无法解析，请检查
                         self.push(f"ERROR-1")
                         self._reset_recv_info()
                         continue
@@ -268,7 +269,6 @@ class WebSocket(threading.Thread):
 
                     if not self.buffer_utf8:
                         logger.debug(f'未从客户端接收到有序信息')
-                        # ERROR-2： 输入为空
                         self.push(f"ERROR-2")
                         continue
                     try:
@@ -290,26 +290,17 @@ class WebSocket(threading.Thread):
                     self._reset_recv_info()
 
     def _process_request(self, recv_message):
-        msg = f'收到了你的消息: {recv_message}'
-        self.push(msg)
-
-        import json
         py_type_msg = json.loads(recv_message)
-        logger.info(type(py_type_msg))
+        logger.info(py_type_msg)
+
         if py_type_msg.get("type") == "get":
             self.push("这是你请求的数据 ")
-        elif py_type_msg.get("type") == "sub":
-            self.push("这是你订阅的数据 ")
 
-            TOPIC = "total"
-            HOSTS = "192.168.1.152:9092,192.168.1.163:9092"
-            GROUP = "total2"
-            CNID = "2"
-            lds = create_consumer(HOSTS, TOPIC, GROUP, CNID)
-            for msg in lds:
-                # 数据类型 bytes
-                # logger.info(str(msg.value), type(msg.value))
-                self.push(msg.value)
+        elif py_type_msg.get("type") == "sub":
+            topic = py_type_msg.get("topic")
+            sub_generator = subscribe(topic)
+            for data in sub_generator:
+                self.push(json.dumps(data))
 
         elif py_type_msg.get("type") == "quit":
             logger.debug(f'检测到客户端希望断开连接请求')
