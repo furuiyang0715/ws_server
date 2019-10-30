@@ -3,7 +3,6 @@ import hashlib
 import json
 import logging
 import struct
-import sys
 import threading
 
 from datas_src.apis import API
@@ -16,14 +15,12 @@ class WebSocket(threading.Thread):
     def __init__(self, server, handle_socket, index, real_ip, remote, path=""):
         threading.Thread.__init__(self)
         self.server = server
-
         self.conn = handle_socket
         self.index = index
         self.name = real_ip
         self.remote = remote
         self.path = path
         self.GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
         self.buffer = ""
         self.buffer_utf8 = b""
         self.length_buffer = 0
@@ -75,10 +72,6 @@ class WebSocket(threading.Thread):
                                                                  "Upgrade: websocket\r\n\r\n"
         self.conn.send(handshake.encode(encoding='utf-8'))
 
-    # def _check_connected(self):
-    #     # (TODO) 增加代码判断协议升级后是否建立连接 ping 以及 pong
-    #     return True
-
     def _convert_str_message(self, msg):
         """
         打包将要发送给客户端的数据
@@ -99,7 +92,6 @@ class WebSocket(threading.Thread):
         back_str.append('\x81')
 
         data_length = len(bytes_msg)
-        # logger.info(f"INFO: send message is {str(msg)} and len is {len(bytes_msg)}")
 
         if data_length <= 125:
             send_msg += str.encode(chr(data_length))
@@ -133,27 +125,22 @@ class WebSocket(threading.Thread):
         self.server.g_code_length = 0
 
     def push(self, msg):
-        """向单个 cli 推送消息"""
+        """向单个 cli 推送消息
+        """
         str_msg = self._convert_str_message(msg)
         if str_msg is not None and len(str_msg) > 0:
-
-            # try:
-            #     self.server.connections["connection"+str(self.index)].send(str_msg)
-            # except Exception as e:
-            #     logger.warning(f'向单个cli推送出现异常: {e}')
-            #     raise RuntimeError(f'向单个cli推送出现异常: {e}')
-            #     # self.server.delete_connection(self.index)
-
             self.server.connections["connection" + str(self.index)].send(str_msg)
         self.server.g_code_length = 0
 
     def broadcast(self, msg):
-        """server 向每一个 cli 广播信息"""
+        """server 向每一个 cli 广播信息
+        """
         str_msg = self._convert_str_message(msg)
         self._broadcast_message(str_msg)
 
     def _cal_msg_length(self, msg):
-        """计算 server 待接收数据的长度信息"""
+        """计算 server 待接收数据的长度信息
+        """
         code_length = msg[1] & 127
         if code_length == 126:
             code_length = struct.unpack('>H', msg[2:4])[0]
@@ -168,7 +155,8 @@ class WebSocket(threading.Thread):
         return header_length, code_length
 
     def _parse_cli_data(self, msg):
-        """解析从客户端收到的数据"""
+        """解析从客户端收到的数据
+        """
         code_length = msg[1] & 127
 
         if code_length == 126:
@@ -222,8 +210,6 @@ class WebSocket(threading.Thread):
         self.length_buffer = 0
         self.buffer_utf8 = b""
 
-    # TODO 增加推送过程中客户端异常挂掉的处理
-    # TODO 对 run 进行运行时异常处理
     def run(self):
         logger.info(f'Handle Socket {self.index} Start!')
         while True:
@@ -231,37 +217,12 @@ class WebSocket(threading.Thread):
                 self._start_handshaken()
                 self.handshaken = True
 
-                # try:
-                #     self._start_handshaken()
-                # except Exception as e:
-                #     logger.warning(f"Socket {self.index} Handshaken Failed!, because {e}")
-                #     self.server.delete_connection(str(self.index))
-                #     break
-                #
-                # is_connected = self._check_connected()
-                # if is_connected is True:
-                #     self.handshaken = True
-                #     self.push("已建立连接")
-
             else:
                 part_msg = self.conn.recv(128)
-                # try:
-                #     part_msg = self.conn.recv(128)
-                # except OSError:
-                #     # logger.debug(f'检测到客户端主动断开连接')
-                #     # self.server.delete_connection(str(self.index))
-                #     break
 
                 # 计算待接收数据的总长度，判断是否接收完，如未接受完需要继续接收 并将计算出的长度预设给 server 的全局变量
                 if self.server.g_code_length == 0:   # 说明是第一次接收
                     self.server.g_header_length, self.server.g_code_length = self._cal_msg_length(part_msg)
-                    # try:
-                    #     self.server.g_header_length, self.server.g_code_length = self._cal_msg_length(part_msg)
-                    # except Exception as e:
-                    #     logger.info(f"无法解析客户端信息:{e}")
-                    #     self.push(f"ERROR-1")
-                    #     self._reset_recv_info()
-                    #     continue
 
                 # 已经接收到的长度
                 self.length_buffer += len(part_msg)
@@ -278,7 +239,6 @@ class WebSocket(threading.Thread):
                         logger.debug(f'未从客户端接收到到有效信息')
                         self.push(f"未接收到到有效信息，请检查参数!")
                         self._reset_recv_info()
-                        # continue
                         break    # 说明线程任务完成
 
                     try:
@@ -287,7 +247,6 @@ class WebSocket(threading.Thread):
                         logger.info(f"无法解析客户端信息:{e}")
                         self.push("消息无法解析，请检查参数")
                         self._reset_recv_info()
-                        # continue
                         break
 
                     try:
@@ -310,7 +269,6 @@ class WebSocket(threading.Thread):
                 instance = API()
                 if py_type_msg.get("method", None) == "active_topics":
                     ret = instance.get_active_topic
-                    # ret = ['hahahahhaah']    # just for test
                 elif py_type_msg.get("method", None) == "exists_topics":
                     ret = instance.get_exists_topic
                 elif py_type_msg.get("method", None) == "select_topics":
@@ -331,6 +289,7 @@ class WebSocket(threading.Thread):
                 for data in ret:
                     logger.debug(f"get data: {data}")
                     self.push(data)
+
             else:
                 logger.debug(f"ret is: {ret}")
                 self.push(json.dumps(ret))
