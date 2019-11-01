@@ -16,31 +16,25 @@ instance = API()
 
 
 # 查询
-ret = instance.select("NYMEX", "F", "CL", "2112", "2018-9-20 12:08:00", "2019-9-28 13:08:00")
-for r in ret:
-    print(r)
+# ret = instance.select("NYMEX", "F", "CL", "2112", "2018-9-20 12:08:00", "2019-9-28 13:08:00")
+# for r in ret:
+#     print(r)
 
 # print(len(ret))
 
 
 # 批量订阅
-# msgs = subscribe(['NYMEX-F-CL-2112', 'CBOT-F-C-2009', 'HKEX-F-LUA-1911'])
-# print(msgs)
-# for one in msgs:
-#     print(one)
-#     print()
+msgs = subscribe(['LME-F-CA-3M', 'HKEX-F-MHI-1911', 'NYMEX-F-CL-2004'])
+print(msgs)
+for one in msgs:
+    print(one)
+    print()
 
 
-# 批量订阅
+# 订阅
 {
     "type": "sub",
     "topics": ['NYMEX-F-CL-2112', 'CBOT-F-C-2009', 'HKEX-F-LUA-1911'],
-}
-
-# 单个订阅
-{
-    "type": "sub",
-    "topics": ['NYMEX-F-CL-2112'],
 }
 
 

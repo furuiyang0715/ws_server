@@ -29,7 +29,8 @@ class WebSocketServer(object):
         max_connections = WEBSOCKETSERVERCONNECTIONS
 
         logger.info(f"WebServer is listening {ip},{port}")
-
+        # Avoid bind() exception: OSError: [Errno 48] Address already in use
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind((ip, port))
         self.socket.listen(max_connections)
 
