@@ -1,1 +1,8 @@
-rsync -e 'ssh -p 9528' -avz /Users/furuiyang/code2/ws_server furuiyang@139.159.137.25:/home/share/
+### 功能说明
+实现一个 Python 版本的 websocket 服务器，数据源模块来自于 datas_src， 由在网上找到的一个聊天室的简易代码源修改而来的。
+
+新增功能是可以同时实现订阅和请求。相互匹配的客户端调用代码见： ws_client
+
+### 说明
+
+实现了一个多线程的服务器，因此服务端收发缓冲区是全局的。
