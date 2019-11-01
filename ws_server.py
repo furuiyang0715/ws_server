@@ -1,7 +1,7 @@
 import logging.config
 import os
 import socket
-import json
+import sys
 
 from mywebsocket import WebSocket
 
@@ -22,7 +22,6 @@ class WebSocketServer(object):
     def _listen_socket_init(self):
         """
         初始化 server 的 listen socket
-        :return:
         """
         ip = WEBSOCKETSERVERHOST
         port = WEBSOCKETSERVERPORT
@@ -34,40 +33,43 @@ class WebSocketServer(object):
         self.socket.bind((ip, port))
         self.socket.listen(max_connections)
 
-    def _inc_connections(self, connection):
-        """handle socket 的注册 server 端的连接数加 +1
+    def register(self, connection):
+        """
+        注册 server 端的连接数加 + 1
         """
         self.connections['connection' + str(self.connection_index)] = connection
         self.connection_index += 1
         logger.info(f"now connections: {self.connections}")
         logger.info(f"now max connection index: {self.connection_index}")
 
-    def delete_connection(self, connection_index: str):
-        """做两件事: (1）拿到处理当前连接的 socket 对象 将该 handle_socket 关闭
-                   （2）删除记录
+    def unregister(self, connection_index: str):
         """
-        if isinstance(connection_index, str) and connection_index.startswith("connection"):
-            c_idx = connection_index
-        else:
-            c_idx = 'connection' + str(connection_index)
-        handle_socket = self.connections.get(c_idx, None)
-        handle_socket.close()
-        logger.debug(f"handle socket 已经断开{connection_index}")
+        取消注册 传入的均是单个数值 与 register 保持一致
+        """
+        c_idx = 'connection' + str(connection_index)
         del self.connections[c_idx]
 
     def begin(self):
         logger.info('WebSocketServer Start!')
         self._listen_socket_init()
-        while True:
-            handle_socket, address = self.socket.accept()
-            logger.debug(f"连接上客户端 {address}, 生成 handle socket {handle_socket} 去处理")
-            handle_wssocket = WebSocket(self, handle_socket, self.connection_index, address[0],
-                                        address, path=None)
-            try:
+        try:
+            while True:
+                handle_socket, address = self.socket.accept()
+                logger.debug(f"连接上客户端 {address}, 生成 handle socket {handle_socket} 去处理")
+                handle_wssocket = WebSocket(self, handle_socket, self.connection_index, address[0],
+                                            address, path=None)
+                # try:
+                #     handle_wssocket.start()
+                # except Exception as e:
+                #     logger.warning(f" handle socket 线程异常退出, 原因: {e} ")
+                #     handle_socket.close()
                 handle_wssocket.start()
-            except Exception as e:
-                logger.warning(f"====== handle socket 退出, 原因: {e} ======")
-            self._inc_connections(handle_socket)
+                self.register(handle_socket)
+        except KeyboardInterrupt:   # ctrl+c 终止了服务端程序等
+            logger.warning("caught keyboard interrupt, exiting")
+        finally:
+            # 退出服务端进程
+            sys.exit(0)
 
 
 logging.config.dictConfig({

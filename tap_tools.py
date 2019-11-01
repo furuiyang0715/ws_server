@@ -105,8 +105,8 @@ class Reports(object):
         self.params = params
         self.client_run(params=params, on_message=on_message)
 
-    def client_run(self, url='ws://tap-api.jingzhuan.cn:46399/',
-    # def client_run(self, url='ws://127.0.0.1:46399/',
+    # def client_run(self, url='ws://tap-api.jingzhuan.cn:46399/',
+    def client_run(self, url='ws://127.0.0.1:46399/',
                    on_message=_on_message,
                    on_error=_on_error,
                    on_close=_on_close,

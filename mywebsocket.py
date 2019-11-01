@@ -34,8 +34,30 @@ class WebSocket(threading.Thread):
 
         self.handshaken = False
 
+    def close(self):
+        """关闭连接
+        (1) 现将其从服务端的注册列表中删除
+        (2) 将其本质上的 socket 关闭
+        (3) 清空接收缓存区中的全局变量
+        """
+        logger.info(f"closing connection to {self.remote}")
+        try:
+            self.server.unregister(self.index)
+        except Exception as e:
+            logger.warning(f"error: server.unregister() exception for {self.remote}: {repr(e)}")
+
+        try:
+            self.conn.close()
+        except OSError as e:
+            logger.warning(f"error: socket.close() exception for {self.remote}: {repr(e)}")
+        finally:
+            # Delete reference to socket object for garbage collection
+            self.conn = None
+        self._reset_recv_info()
+
     def _generate_token(self, ws_key):
-        """拿到客户端的 ws_key 生成 ws_token
+        """
+        拿到客户端的 ws_key 生成 ws_token
         """
         ws_key += self.GUID
         ser_websocketkey = hashlib.sha1(ws_key.encode(encoding='utf-8')).digest()
@@ -43,7 +65,8 @@ class WebSocket(threading.Thread):
         return websocket_token.decode('utf-8')
 
     def _split_recv_buffer(self):
-        """提取 ws 请求头信息在一个字典里
+        """
+        提取 ws 请求头信息在一个字典里
         """
         headers = {}
         header, data = self.buffer.split('\r\n\r\n', 1)
@@ -53,11 +76,12 @@ class WebSocket(threading.Thread):
         return headers
 
     def _start_handshaken(self):
-        """握手，升级 websocket 协议
         """
-        logger.debug(f'INFO: Socket {self.index} Start Handshaken with {self.remote}!')
+        握手，升级 websocket 协议
+        """
+        logger.debug(f'Socket {self.index} Start Handshaken with {self.remote}!')
         self.buffer = self.conn.recv(1024).decode('utf-8')
-        logger.debug(f"INFO: Socket %s self.buffer is {(self.index, self.buffer)}")
+        logger.debug(f"Socket {self.index} self.buffer is {self.buffer}")
         if self.buffer.find('\r\n\r\n') == -1:
             raise RuntimeError("socket error!")
         headers = self._split_recv_buffer()
@@ -139,7 +163,8 @@ class WebSocket(threading.Thread):
         self._broadcast_message(str_msg)
 
     def _cal_msg_length(self, msg):
-        """计算 server 待接收数据的长度信息
+        """
+        根据协议计算 server 待接收数据的长度信息
         """
         code_length = msg[1] & 127
         if code_length == 126:
@@ -155,7 +180,8 @@ class WebSocket(threading.Thread):
         return header_length, code_length
 
     def _parse_cli_data(self, msg):
-        """解析从客户端收到的数据
+        """
+        解析从客户端收到的数据
         """
         code_length = msg[1] & 127
 
@@ -211,24 +237,37 @@ class WebSocket(threading.Thread):
         self.buffer_utf8 = b""
 
     def run(self):
+        """
+        一个 hand_socket 处理的过程要经历：
+        （1） 完成握手 升级 websocket 协议
+        （2） 在一个事件循环中处理请求和订阅任务 会有以下几种情况：
+                (1) 中间过程异常 线程退出 在外层的 run 中整体捕获
+                (2) 正确处理请求，线程正常退出
+                (3) 多线程持续处理订阅任务 断连时在客户端维护重连机制
+        :return:
+        """
+        try:
+            self._run()
+        except Exception as e:
+            logger.warning(f"线程异常:{e} 请及时检查")
+            self.close()
+
+    def _run(self):
         logger.info(f'Handle Socket {self.index} Start!')
         while True:
             if self.handshaken is False:
                 self._start_handshaken()
                 self.handshaken = True
-
             else:
                 part_msg = self.conn.recv(128)
-
                 # 计算待接收数据的总长度，判断是否接收完，如未接受完需要继续接收 并将计算出的长度预设给 server 的全局变量
                 if self.server.g_code_length == 0:   # 说明是第一次接收
                     self.server.g_header_length, self.server.g_code_length = self._cal_msg_length(part_msg)
-
                 # 已经接收到的长度
                 self.length_buffer += len(part_msg)
                 # 已经接收到的bytes内容
                 self.buffer_utf8 += part_msg
-                # 已经接受的长度减去头部信息的长度小于从头部信息里面计算处出来的实际长度 就是没接受完咯
+                # 已经接受的长度减去头部信息的长度小于从头部信息里面计算处出来的实际长度 就是没接收完成
                 if self.length_buffer - self.server.g_header_length < self.server.g_code_length:
                     logger.info("数据未接收完,接续接收中")
                     continue
@@ -236,80 +275,59 @@ class WebSocket(threading.Thread):
                     logger.info(f"g_code_length:{self.server.g_code_length}")
                     logger.info(f"Recv信息 {self.buffer_utf8},长度为 {len(self.buffer_utf8)}")
                     if not self.buffer_utf8:
-                        logger.debug(f'未从客户端接收到到有效信息')
-                        self.push(f"未接收到到有效信息，请检查参数!")
-                        self._reset_recv_info()
-                        break    # 说明线程任务完成
-
+                        raise RuntimeError(f"未接收到到有效信息，请检查参数!")
                     try:
                         recv_message = self._parse_cli_data((self.buffer_utf8))
                     except Exception as e:
-                        logger.info(f"无法解析客户端信息:{e}")
-                        self.push("消息无法解析，请检查参数")
-                        self._reset_recv_info()
-                        break
+                        raise RuntimeError(f"消息无法解析{e}，请检查参数")
 
                     try:
                         self._process_request(recv_message)
                     except Exception as e:
-                        self._reset_recv_info()
-                        self.server.delete_connection(str(self.index))
-                        logger.warning(f"线程{self.index} 处理异常 {e} 已退出")
-                        logger.info(f"当前的连接情况是{self.server.connections}")
-                        break
+                        raise RuntimeError(f'{self.index}请求处理异常{e} 请联系管理员')
+
+                    # 非订阅任务正确处理之后会进入到此流程
                     self._reset_recv_info()
-                    break
+                    self.close()
 
     def _process_request(self, recv_message):
+        """
+        分流处理请求
+        """
         py_type_msg = json.loads(recv_message)
         logger.info(f"接收到的请求参数是: {py_type_msg}")
         if py_type_msg.get("type") == "get":
-            ret = None
-            try:
-                instance = API()
-                if py_type_msg.get("method", None) == "active_topics":
-                    ret = instance.get_active_topic
-                elif py_type_msg.get("method", None) == "exists_topics":
-                    ret = instance.get_exists_topic
-                elif py_type_msg.get("method", None) == "select_topics":
-                    exchangeno = py_type_msg.get("exchangeno", None)
-                    commoditytype = py_type_msg.get("commoditytype", None)
-                    commodityno = py_type_msg.get("commodityno", None)
-                    contractno = py_type_msg.get("contractno", None)
-                    begin = py_type_msg.get('begin', None)
-                    end = py_type_msg.get("end", None)
-                    ret = instance.select(exchangeno, commoditytype, commodityno, contractno, begin, end)
-            except Exception as e:
-                ret = f"查询请求异常:{e}, 请检查或联系管理员"
-                self.push(json.dumps(ret))
-                self.server.delete_connection(str(self.index))
-                return
-
-            if py_type_msg.get("method", None) == "select_topics":
-                for data in ret:
-                    logger.debug(f"get data: {data}")
+            g_ret = None   # 一次性返回的查询请求
+            s_ret = None   # 订阅请求以及多次返回的查询请求
+            instance = API()
+            if py_type_msg.get("method", None) == "active_topics":
+                g_ret = instance.get_active_topic
+            elif py_type_msg.get("method", None) == "exists_topics":
+                g_ret = instance.get_exists_topic
+            elif py_type_msg.get("method", None) == "select_topics":
+                exchangeno = py_type_msg.get("exchangeno", None)
+                commoditytype = py_type_msg.get("commoditytype", None)
+                commodityno = py_type_msg.get("commodityno", None)
+                contractno = py_type_msg.get("contractno", None)
+                begin = py_type_msg.get('begin', None)
+                end = py_type_msg.get("end", None)
+                s_ret = instance.select(exchangeno, commoditytype, commodityno, contractno, begin, end)
+            else:
+                raise RuntimeError("请求参数异常")
+            if g_ret:
+                self.push(json.dumps(g_ret))
+            if s_ret:
+                for data in s_ret:
+                    # TODO 这样推送过去 客户端还需要进行处理
                     self.push(data)
 
-            else:
-                logger.debug(f"ret is: {ret}")
-                self.push(json.dumps(ret))
-            self.server.delete_connection(str(self.index))
-            return
-
         elif py_type_msg.get("type") == "sub":
-            try:
-                topics = py_type_msg.get("topics")
-                if not isinstance(topics, list):
-                    topics = [topics]
-                sub_generator = subscribe(topics)
-                for data in sub_generator:
-                    self.push(json.dumps(data))
-            except Exception as e:
-                ret = f'订阅请求异常: {e}, 请检查或联系管理员'
-                self.push(ret)
-                self.server.delete_connection(str(self.index))
-                return
+            topics = py_type_msg.get("topics")
+            if not isinstance(topics, list):
+                topics = [topics]
+            sub_generator = subscribe(topics)
+            for data in sub_generator:
+                # TODO 同上
+                self.push(json.dumps(data))
         else:
-            self.push("请求功能暂未实现，请检查或联系管理员")
-            self.server.delete_connection(str(self.index))
-            return
+            raise RuntimeError("请求参数异常")
